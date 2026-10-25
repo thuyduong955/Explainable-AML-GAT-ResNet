@@ -5,7 +5,8 @@ They live in the shared Google Drive folder `Explainable-AML-GAT-ResNet/data`
 (original source: https://www.kaggle.com/datasets/ellipticco/elliptic-data-set).
 
 ## One-time setup
-1. Ask the owner to share the Drive folder with your Google account.
+1. Open the shared Drive folder and request access from the owner (Duong):
+   https://drive.google.com/drive/folders/1aV42mozY_-CTx8g2Xo32qp7b3QjiAUSn
 2. In Google Drive: right-click the shared folder -> Organize -> Add shortcut -> My Drive.
    Keep the folder name `Explainable-AML-GAT-ResNet`.
 
