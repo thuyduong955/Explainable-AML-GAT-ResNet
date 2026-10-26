@@ -5,3 +5,4 @@ venv/
 data/*.csv
 .build/
 .ape/
+.venv/
