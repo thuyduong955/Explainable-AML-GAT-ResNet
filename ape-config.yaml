@@ -1,0 +1,4 @@
+name: explainable-aml-gat-resnet
+
+plugins:
+  - name: vyper
