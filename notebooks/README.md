@@ -17,6 +17,68 @@ Thư mục này chứa các Jupyter Notebook dùng để thiết lập môi trư
 
 ---
 
+## Notebook `train_baselines.ipynb`
+
+Notebook [`train_baselines.ipynb`](./train_baselines.ipynb) hiện thực hóa bước huấn luyện baseline trên bộ dữ liệu Elliptic đã được chuẩn hóa.
+
+### Dữ liệu đầu vào và cấu hình
+
+- Đọc dữ liệu từ `data/elliptic_features_scaled.csv`.
+- Chỉ sử dụng các mẫu đã có nhãn, tức là các dòng có `y != -1`.
+- Loại các cột định danh và nhãn khỏi tập đặc trưng: `node_idx`, `txId`, `time_step_raw` và `y`.
+- Dùng temporal split để tránh trộn dữ liệu giữa các giai đoạn:
+  - **Train:** `time_step_raw <= 34` — 29.894 mẫu.
+  - **Test:** `time_step_raw >= 35` — 16.670 mẫu.
+- Kết quả chạy hiện tại ghi nhận tổng cộng 46.564 giao dịch có nhãn.
+- Seed của các mô hình được đặt là `42`; Random Forest sử dụng `n_jobs=-1`.
+
+### Các baseline được huấn luyện
+
+1. **Logistic Regression**
+   - Khởi tạo với `random_state=42`.
+   - Đánh giá bằng Precision, Recall, F1-score cho lớp `Illicit (1)` và `classification_report`.
+2. **Random Forest**
+   - `n_estimators=50`.
+   - `max_features=50`.
+   - `random_state=42`.
+   - `n_jobs=-1`.
+   - Đánh giá bằng cùng bộ chỉ số như Logistic Regression.
+
+### Kết quả mẫu đã ghi trong notebook
+
+| Mô hình | Precision (Illicit) | Recall (Illicit) | F1 (Illicit) | Accuracy |
+| :--- | :---: | :---: | :---: | :---: |
+| Logistic Regression | 0.318 | 0.712 | 0.440 | 0.88 |
+| Random Forest | 0.911 | 0.725 | 0.807 | 0.98 |
+
+Các con số trên là output của lần chạy được lưu trong notebook; cần chạy lại notebook khi thay đổi dữ liệu, môi trường hoặc cấu hình mô hình.
+
+### Artifact đầu ra
+
+Notebook lưu các model bằng `joblib.dump` vào thư mục `models/`:
+
+- `logistic_regression_model.joblib`
+- `random_forest_model.joblib`
+
+Khi chạy trên Google Colab, output mặc định là:
+
+```text
+/content/drive/MyDrive/Explainable-AML-GAT-ResNet/models/
+```
+
+Cell đầu tiên có nhánh cấu hình cho môi trường local với `../data/` và `../models/`. Tuy nhiên, các cell đọc dữ liệu và lưu model phía sau notebook hiện đặt lại `DATA_PATH` và `MODEL_DIR` theo đường dẫn Google Drive. Khi chạy ngoài Colab, cần kiểm tra và chỉnh hai biến này sang đường dẫn local trước khi thực thi các cell tương ứng.
+
+### Cách chạy
+
+1. Mở `train_baselines.ipynb` trong Jupyter hoặc Google Colab.
+2. Bảo đảm file `data/elliptic_features_scaled.csv` tồn tại; trên Colab, mount Google Drive và kiểm tra đúng tên thư mục dự án.
+3. Chạy các cell theo thứ tự: mount/cấu hình đường dẫn, import thư viện, đọc dữ liệu, temporal split, huấn luyện hai baseline và lưu artifact.
+4. Kiểm tra output metric và sự xuất hiện của hai file `.joblib` trong thư mục `models/`.
+
+Các dependency chính của notebook gồm `pandas`, `numpy`, `scikit-learn` và `joblib`.
+
+---
+
 ## Hướng dẫn chạy `00_setup_pyg_environment.ipynb` (Colab Setup)
 
 1. **Thiết lập Runtime:**
