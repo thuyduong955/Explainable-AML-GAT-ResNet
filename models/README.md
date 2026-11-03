@@ -1,31 +1,24 @@
-# `models/`
+# 🧠 GAT-ResNet: Core Model Architecture for AML Detection
 
-Thư mục này lưu các artifact của mô hình học máy và học sâu được huấn luyện
-cho bài toán phát hiện giao dịch bất hợp pháp.
+Thư mục này chứa mã nguồn định nghĩa bộ khung kiến trúc lõi (skeleton) của mạng **GAT-ResNet**. Mô hình này được thiết kế chuyên biệt để phân loại các giao dịch hợp pháp (Licit) và bất hợp pháp (Illicit) trên đồ thị giao dịch Bitcoin, phục vụ cho hệ thống Anti-Money Laundering (AML).
 
-## Artifact dự kiến
+Kiến trúc mô hình được triển khai bám sát theo nguyên bản đề xuất từ nghiên cứu của *Adloori et al. (2024)*.
 
-- Checkpoint và trọng số của GAT-ResNet 3 lớp.
-- Embedding node 100 chiều được trích xuất từ GAT-ResNet.
-- Mô hình baseline và ensemble như Random Forest, XGBoost.
-- Preprocessor, scaler, feature schema và mapping cần để suy luận.
-- Metadata về dataset version, temporal split, seed, hyperparameters và metrics.
+## 🏗️ Đặc tả kiến trúc (Architecture Details)
 
-Mô hình ensemble sử dụng 271 đặc trưng gồm 166 đặc trưng Elliptic gốc, 5 đặc
-trưng topo NetworkX và 100 chiều embedding GAT-ResNet. Mô hình cũng được dùng
-để tạo risk score AML trong khoảng `0–100` và nhãn `Licit/Illicit`.
+Mô hình là sự kết hợp giữa **Graph Attention Network (GAT)** và **Residual Network (ResNet)**, được cấu hình mặc định để khớp nối hoàn hảo với tập dữ liệu Elliptic:
 
-## Quy ước đặt tên
+*   **Input Layer:** Nhận đầu vào là ma trận đồ thị với `166` đặc trưng (features) cho mỗi node (giao dịch).
+*   **GAT Layer 1 & 2 (Trích xuất đặc trưng):** 
+    *   Sử dụng lớp `GATConv` với `100` kênh ẩn (hidden channels) và `4` attention heads.
+    *   Đầu ra của các heads được nối lại (concatenate), tạo thành tensor `400` chiều.
+    *   Hàm kích hoạt `ELU` và `Dropout` với xác suất `0.5` được áp dụng ngay sau mỗi lớp để ngăn chặn overfitting.
+*   **Residual Connection (Khối thặng dư):** Đầu ra của Layer 1 được cộng trực tiếp vào đầu ra của Layer 2 (`x_res = x1 + x2`) nhằm giải quyết vấn đề triệt tiêu đạo hàm (vanishing gradient) và bảo toàn thông tin đồ thị gốc.
+*   **Output Layer (Phân loại):** Lớp `GATConv` thứ 3 ánh xạ tensor `400` chiều về `2` lớp đầu ra (Licit/Illicit), đi qua hàm `Softmax` để tính xác suất phân loại dự đoán.
 
-Tên file nên thể hiện mô hình và phiên bản, ví dụ:
+## ⚙️ Yêu cầu môi trường (Requirements)
 
-```text
-gat-resnet-baseline-v1.pt
-xgboost-hybrid-v1.json
-feature-schema-v1.json
-```
-
-Mỗi artifact cần có metadata hoặc tài liệu đi kèm để xác định cách tái tạo.
-Không commit checkpoint lớn hoặc thông tin bí mật nếu chưa thống nhất cơ chế
-lưu trữ của nhóm.
-
+Để chạy được mô hình này, môi trường ảo (`.venv`) cần cài đặt PyTorch và PyTorch Geometric:
+```bash
+pip install torch
+pip install torch_geometric
