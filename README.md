@@ -24,6 +24,9 @@ Trạng thái rủi ro sẽ được lưu trữ on-chain thông qua Smart Contra
 - `tests/`: Kịch bản kiểm thử (pytest) cho Smart Contract và On-chain logic.
 - `dashboard/`: Mã nguồn giao diện ứng dụng (Streamlit).
 
+## Google Drive:
+https://drive.google.com/drive/u/0/folders/1aV42mozY_-CTx8g2Xo32qp7b3QjiAUSn 
+
 ## 🛠 Hướng dẫn Cài đặt ban đầu (Dành cho thành viên)
 Để bắt đầu làm việc, mỗi thành viên cần clone repository này về máy cục bộ:
 ```bash
