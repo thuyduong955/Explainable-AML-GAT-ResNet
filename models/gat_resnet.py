@@ -1,75 +1,124 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GATConv
 
-class GATResNet(torch.nn.Module):
-    def __init__(self, in_channels=166, hidden_channels=100, heads=4, out_channels=2, dropout_prob=0.5):
-        # Class GATResNet inherits from torch.nn.Module
-        super(GATResNet, self).__init__()
-        
+
+class PeriodicEncoder(nn.Module):
+    """Fourier numerical feature encoder for sharp tabular decision boundaries."""
+
+    def __init__(self, in_features: int = 165, n_frequencies: int = 3, sigma: float = 0.2):
+        super().__init__()
+        self.coeffs = nn.Parameter(torch.randn(in_features, n_frequencies) * sigma)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        v = 2 * torch.pi * x.unsqueeze(-1) * self.coeffs.unsqueeze(0)
+        return torch.cat([x, torch.sin(v).flatten(1), torch.cos(v).flatten(1)], dim=-1)
+
+
+class SwiGLUBlock(nn.Module):
+    """Gated residual block (SwiGLU) for tabular branch."""
+
+    def __init__(self, dim: int, hidden_dim: int, dropout: float = 0.35):
+        super().__init__()
+        self.norm = nn.BatchNorm1d(dim)
+        self.w_gate = nn.Linear(dim, hidden_dim)
+        self.w_val = nn.Linear(dim, hidden_dim)
+        self.drop = nn.Dropout(dropout)
+        self.w_out = nn.Linear(hidden_dim, dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = self.norm(x)
+        return x + self.w_out(self.drop(F.silu(self.w_gate(h)) * self.w_val(h)))
+
+
+class GATResNet(nn.Module):
+    """
+    Stabilized GAT-ResNet with Periodic-SwiGLU Residual Fusion:
+    - 3 GAT layers with self-residual connections and BatchNorm1d
+    - Residual connection between layer 1 and layer 2 outputs (x1 + x2) -> 100-dim Z_gat
+    - Periodic-SwiGLU skip branch on 165 normalized transaction features
+    - embed() returns 100-dim structural node embeddings Z_gat for downstream fusion (BF-25)
+    """
+
+    def __init__(
+        self,
+        in_channels: int = 165,
+        hidden_channels: int = 100,
+        heads: int = 4,
+        out_channels: int = 2,
+        dropout_prob: float = 0.35,
+        use_skip: bool = True,
+    ):
+        super().__init__()
         self.dropout_prob = dropout_prob
-        
-        # Class GAT 1: Input 166 -> Output: 100 * 4 = 400 (concat 4 heads)
-        self.conv1 = GATConv(in_channels, hidden_channels, heads=heads)
-        
-        # Class GAT 2: Input 400 -> Output: 100 * 4 = 400
-        self.conv2 = GATConv(hidden_channels * heads, hidden_channels, heads=heads)
-        
-        # Class GAT 3 (Output Layer): Input 400 -> Output: 2
-        # Use concat=False to average the attention heads instead of concatenating them
-        self.conv3 = GATConv(hidden_channels * heads, out_channels, heads=1, concat=False)
+        self.use_skip = use_skip
+        hid_dim = hidden_channels * heads  # 400
 
-    def forward(self, x, edge_index):
-        # Passing through GATConv layer 1 -> ELU -> Dropout
-        x1 = self.conv1(x, edge_index)
-        x1 = F.elu(x1)
-        x1 = F.dropout(x1, p=self.dropout_prob, training=self.training)
-        
-        # Passing through GATConv layer 2 -> ELU -> Dropout
-        x2 = self.conv2(x1, edge_index)
-        x2 = F.elu(x2)
-        x2 = F.dropout(x2, p=self.dropout_prob, training=self.training)
-        
-        # Integrating a Residual Connection: Directly add tensor x1 (the input to layer 2) and x2 (the output of layer 2)
-        x_res = x1 + x2
-        
-        # Class GAT third layer and Softmax function to calculate the probability for 2 classes
-        out = self.conv3(x_res, edge_index)
-        out = F.softmax(out, dim=1)
-        
+        # Graph branch: 3-layer GAT-ResNet
+        self.conv1 = GATConv(in_channels, hidden_channels, heads=heads, dropout=0.1, residual=True)
+        self.bn1 = nn.BatchNorm1d(hid_dim)
+
+        self.conv2 = GATConv(hid_dim, hidden_channels, heads=heads, dropout=0.1, residual=True)
+        self.bn2 = nn.BatchNorm1d(hid_dim)
+
+        # Bottleneck 400 -> 100 dims (Z_gat)
+        self.embed_layer = nn.Linear(hid_dim, hidden_channels)
+        self.bn_emb = nn.BatchNorm1d(hidden_channels)
+
+        # 3rd GAT layer for 64-dim neighborhood context
+        self.conv3 = GATConv(hidden_channels, 64, heads=1, concat=False, residual=True)
+        self.bn3 = nn.BatchNorm1d(64)
+
+        # Tabular skip branch: Periodic numerical embeddings + SwiGLU
+        if self.use_skip:
+            n_freq = 3
+            enc_dim = in_channels * (1 + 2 * n_freq)  # 1155
+            self.periodic = PeriodicEncoder(in_channels, n_frequencies=n_freq, sigma=0.2)
+            self.tab_proj = nn.Sequential(
+                nn.Linear(enc_dim, 128),
+                nn.BatchNorm1d(128),
+                nn.SiLU(),
+                nn.Dropout(dropout_prob),
+            )
+            self.tab_block = SwiGLUBlock(128, 256, dropout=dropout_prob)
+            fusion_dim = 64 + hidden_channels + 128  # 292
+        else:
+            fusion_dim = 64 + hidden_channels
+
+        self.classifier = nn.Sequential(
+            nn.BatchNorm1d(fusion_dim),
+            nn.Dropout(dropout_prob),
+            nn.Linear(fusion_dim, out_channels),
+        )
+
+    def embed(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+        """Returns 100-dim graph node embeddings Z_gat."""
+        x1 = F.elu(self.bn1(self.conv1(x, edge_index)))
+        x2 = F.elu(self.bn2(self.conv2(x1, edge_index)))
+        return F.elu(self.bn_emb(self.embed_layer(x1 + x2)))
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        edge_index: torch.Tensor,
+        return_probs: bool = False,
+    ) -> torch.Tensor:
+        x1 = F.dropout(F.elu(self.bn1(self.conv1(x, edge_index))), p=self.dropout_prob, training=self.training)
+        x2 = F.dropout(F.elu(self.bn2(self.conv2(x1, edge_index))), p=self.dropout_prob, training=self.training)
+
+        z_gat = F.elu(self.bn_emb(self.embed_layer(x1 + x2)))
+        z_g3 = F.elu(
+            self.bn3(self.conv3(F.dropout(z_gat, p=self.dropout_prob, training=self.training), edge_index))
+        )
+
+        if self.use_skip:
+            z_tab = self.tab_block(self.tab_proj(self.periodic(x)))
+            fused = torch.cat([z_g3, z_gat, z_tab], dim=-1)
+        else:
+            fused = torch.cat([z_g3, z_gat], dim=-1)
+
+        out = self.classifier(fused)
+        if return_probs:
+            return F.softmax(out, dim=1)
         return out
-
-# ==========================================
-# Script for generating dummy data for testing
-# ==========================================
-if __name__ == "__main__":
-    print("Initialize Dummy Data...")
-    num_nodes = 50       # Simulate 50 transactions
-    in_channels = 166    # 166 input features
-    out_channels = 2     # Licit / Illicit
-    
-    # Create a feature matrix x using torch.randn
-    # Size: (number of nodes, number of input features) = (50, 166)
-    x = torch.randn((num_nodes, in_channels))
-    
-    # Create an edge matrix edge_index (simulating 120 edges connecting 50 nodes)
-    # Size: (2, edges)
-    num_edges = 120
-    edge_index = torch.randint(0, num_nodes, (2, num_edges), dtype=torch.long)
-    
-    # Initialize model
-    print("Initialize the GAT-ResNet model...")
-    model = GATResNet(in_channels=in_channels, hidden_channels=100, heads=4, out_channels=out_channels)
-    
-    # Pass dummy data through the model
-    out = model(x, edge_index)
-    
-    # Output the dimensions to verify that the layers have successfully connected and that there are no dimension errors
-    print("\n--- TEST RESULTS ---")
-    print(f"Input feature tensor dimensions (x): {x.shape}")
-    print(f"Input edge index tensor dimensions (edge_index): {edge_index.shape}")
-    print(f"Output tensor dimensions (output): {out.shape}")
-    
-    # Check if the output dimensions are correct (50, 2)
-    assert out.shape == (num_nodes, out_channels), "Output data dimension error!"
-    print("Success: The GAT-ResNet structure has been connected correctly according to the paper.")
