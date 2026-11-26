@@ -104,12 +104,31 @@ class GATResNet(nn.Module):
         edge_index: torch.Tensor,
         return_probs: bool = False,
     ) -> torch.Tensor:
-        x1 = F.dropout(F.elu(self.bn1(self.conv1(x, edge_index))), p=self.dropout_prob, training=self.training)
-        x2 = F.dropout(F.elu(self.bn2(self.conv2(x1, edge_index))), p=self.dropout_prob, training=self.training)
+        out, _ = self._forward(x, edge_index)
+        return F.softmax(out, dim=1) if return_probs else out
+
+    def forward_with_attention(self, x: torch.Tensor, edge_index: torch.Tensor):
+        """Return logits, Z_gat, and (edges, coefficients) for each GAT layer."""
+        if self.training:
+            raise ValueError("Call eval() before extracting attention")
+        attention = []
+        logits, embedding = self._forward(x, edge_index, attention)
+        return logits, embedding, attention
+
+    def _forward(self, x, edge_index, attention=None):
+        def apply_conv(conv, features):
+            if attention is None:
+                return conv(features, edge_index)
+            output, weights = conv(features, edge_index, return_attention_weights=True)
+            attention.append(weights)
+            return output
+
+        x1 = F.dropout(F.elu(self.bn1(apply_conv(self.conv1, x))), p=self.dropout_prob, training=self.training)
+        x2 = F.dropout(F.elu(self.bn2(apply_conv(self.conv2, x1))), p=self.dropout_prob, training=self.training)
 
         z_gat = F.elu(self.bn_emb(self.embed_layer(x1 + x2)))
         z_g3 = F.elu(
-            self.bn3(self.conv3(F.dropout(z_gat, p=self.dropout_prob, training=self.training), edge_index))
+            self.bn3(apply_conv(self.conv3, F.dropout(z_gat, p=self.dropout_prob, training=self.training)))
         )
 
         if self.use_skip:
@@ -118,7 +137,4 @@ class GATResNet(nn.Module):
         else:
             fused = torch.cat([z_g3, z_gat], dim=-1)
 
-        out = self.classifier(fused)
-        if return_probs:
-            return F.softmax(out, dim=1)
-        return out
+        return self.classifier(fused), z_gat

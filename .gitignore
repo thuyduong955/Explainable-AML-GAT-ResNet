@@ -7,3 +7,4 @@ data/elliptic_txs_*.csv
 .ape/
 .venv/
 .pytest_cache/
+outputs/bf25/
