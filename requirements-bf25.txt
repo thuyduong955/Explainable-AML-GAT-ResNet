@@ -1,0 +1,6 @@
+captum>=0.8,<1
+numpy>=1.26,<3
+pandas>=2.2,<4
+scikit-learn>=1.5,<2
+torch>=2.6,<3
+torch-geometric>=2.6,<3
